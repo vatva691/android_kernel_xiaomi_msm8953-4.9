@@ -1,4 +1,5 @@
 /* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,6 +11,7 @@
  * GNU General Public License for more details.
  */
 
+/* msm8953-pm */
 &soc {
 	qcom,mpm@601d4 {
 		qcom,gic-map = <2 216>, /* tsens_upper_lower_int */
@@ -194,5 +196,116 @@
 			<74  141>,
 			<0xff 24>,
 			<0xff 88>;
+	};
+};
+
+/* msm-pm8953 */
+&spmi_bus {
+	qcom,pm8953@0 {
+		qcom,power-on@800 {
+			qcom,store-hard-reset-reason;
+			qcom,pon_1 {
+				qcom,support-reset = <1>;
+				qcom,s1-timer = <6720>;
+				qcom,s2-timer = <0>;
+				qcom,s2-type = <7>;
+			};
+
+			qcom,pon_3 {
+				qcom,pon-type = <3>;
+				qcom,support-reset = <1>;
+				qcom,pull-up = <1>;
+				qcom,s1-timer = <3072>;
+				qcom,s2-timer = <2000>;
+				qcom,s2-type = <1>;
+				qcom,use-bark;
+			};
+		};
+		pm8953_gpios: gpios {
+			gpio@c700 {
+				/delete-property/ status;
+				qcom,master-en = <0>;
+			};
+		};
+		/delete-node/ qcom,pm8953_typec@bf00;
+	};
+};
+
+/* msm-pmi8950 */
+&spmi_bus {
+	qcom,pmi8950@2 {
+		pmi8950_vadc: vadc@3100 {
+			chan@10 {
+				label = "pcba_vadc";
+				reg = <0x10>;
+				qcom,decimation = <0>;
+				qcom,pre-div-channel-scaling = <0>; //1:1
+				qcom,calibration-type = "ratiometric";
+				qcom,scale-function = <0>;
+				qcom,hw-settle-time = <1>;
+				qcom,fast-avg-setup = <2>;
+			};
+		};
+		pmi8950_mpps: mpps {
+			mpp@a000 {
+				qcom,mode = <4>; /* AIN input */
+				qcom,invert = <1>; /* Enable MPP */
+				com,ain-route = <0>; /* AMUX 5 */
+				qcom,master-en = <1>;
+				qcom,src-sel = <0>; /* Function constant */
+				status = "okay";
+			};
+		};
+		pmi8950_charger: qcom,qpnp-smbcharger {
+			qcom,iterm-ma = <200>;
+			qcom,float-voltage-mv = <4380>;
+			qcom,resume-delta-mv = <50>;
+			/delete-property/ qcom,rparasitic-uohm;
+			qcom,rparasitics-uohm = <100000>;
+			qcom,charge-unknown-battery;
+			/delete-property/ qcom,parallel-usb-min-current-ma;
+			/delete-property/ qcom,parallel-usb-9v-min-current-ma;
+			/delete-property/ qcom,parallel-allowed-lowering-ma;
+			qcom,override-usb-current;
+			qcom,fastchg-current-comp = <1200>;
+			qcom,float-voltage-comp = <15>;
+			/delete-property/ qcom,autoadjust-vfloat;
+		};
+		pmi8950_fg: qcom,fg {
+			/delete-property/ qcom,resume-soc;
+			qcom,resume-soc-raw = <254>;
+			qcom,fg-iterm-ma = <300>;
+			qcom,fg-chg-iterm-ma = <200>;
+			qcom,fg-cutoff-voltage-mv = <3400>;
+			qcom,hold-soc-while-full;
+			qcom,fg-cc-cv-threshold-mv =<4370>;
+			qcom,vbat-estimate-diff-mv = <200>;
+		};
+	};
+	qcom,pmi8950@3 {
+		labibb: qpnp-labibb-regulator {
+			status = "ok";
+			ibb_regulator: qcom,ibb@dc00 {
+				qcom,qpnp-ibb-limit-maximum-current = <200>;
+			};
+			lab_regulator: qcom,lab@de00 {
+				qcom,qpnp-lab-limit-maximum-current = <200>;
+			};
+		};
+		wled: qcom,leds@d800 {
+			qcom,led-strings-list = [00 01 02];
+			qcom,en-cabc;
+		};
+		flash_led: qcom,leds@d300 {
+			pmi8950_flash0: qcom,flash_0 {
+				qcom,current = <1000>;
+			};
+		};
+		pmi_haptic: qcom,haptics@c000 {
+			qcom,vmax-mv = <3000>;
+			qcom,actuator-type = <1>;
+			qcom,use-play-irq;
+			qcom,use-sc-irq;
+		};
 	};
 };

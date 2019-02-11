@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -11,7 +12,7 @@
  * GNU General Public License for more details.
  */
 
-
+/* msm8953-pinctrl */
 &soc {
 	tlmm: pinctrl@1000000 {
 		cam_sensor_rear_default: cam_sensor_rear_default {
@@ -80,10 +81,6 @@
 				pins = "gpio129";
 			};
 		};
-		pmx_mdss: pmx_mdss {
-			/delete-node/ mdss_dsi_gpio;
-		};
-
 		/*fp gpio of gooid & fpc */
 		goodix_spi_active: goodix_spi_active{
 			mux {
@@ -195,7 +192,6 @@
 				input-enable;
 			};
 		};
-
 		pri-tlmm-lines {
 			pri_tlmm_lines_act: pri_tlmm_lines_act {
 				mux {
@@ -214,7 +210,6 @@
 				};
 			};
 		};
-
 		spi6 {
 			spi6_default: spi6_default {
 				/* active state */
@@ -288,7 +283,54 @@
 				};
 			};
 		};
+		/* add pingrp for goodix gt917d touchscreen */
+		ts_int_default: ts_int_default {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio65";
+				drive-strength = <16>;
+				/*bias-pull-up;*/
+				input-enable;
+				bias-disable;
+			};
+		};
 
+		ts_int_output_high: ts_int_output_high {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio65";
+				output-high;
+			};
+		};
+
+		ts_int_output_low: ts_int_output_low {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio65";
+				output-low;
+			};
+		};
+
+		ts_int_input: ts_int_input {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio65";
+				input-enable;
+				bias-disable;
+			};
+		};
 		pmx_ts_reset_suspend {
 			synaptic_reset_suspend: synaptic_reset_suspend {
 				mux {
@@ -321,24 +363,5 @@
 				};
 			};
 		};
-		pmx_mdss {
-			mdss_dsi_active: mdss_dsi_active {
-				mux {
-					pins = "gpio61";
-				};
-				config {
-					pins = "gpio61";
-				};
-			};
-			mdss_dsi_suspend: mdss_dsi_suspend {
-				mux {
-					pins = "gpio61";
-				};
-				config {
-					pins = "gpio61";
-				};
-			};
-		};
 	};
-
 };

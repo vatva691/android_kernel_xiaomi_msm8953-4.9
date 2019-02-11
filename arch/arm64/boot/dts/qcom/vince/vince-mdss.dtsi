@@ -1,4 +1,6 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/*
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,10 +12,15 @@
  * GNU General Public License for more details.
  */
 
+/* msm8953-mdss */
 &soc {
 	mdss_mdp: qcom,mdss_mdp@1a00000 {
-		qcom,mdss-clk-factor = <105 100>;	/* 1.05 times */
+			qcom,mdss-clk-factor = <110 100>;	/* 1.10 times */
 	};
+};
+
+/* msm8953-mdss-pll */
+&soc {
 	mdss_dsi0_pll: qcom,mdss_dsi_pll@994400 {
 		/delete-property/ qcom,dsi-pll-ssc-en;
 		/delete-property/ qcom,dsi-pll-ssc-mode;
@@ -24,13 +31,12 @@
 	};
 };
 
-/*add begin for E7 display*/
+/* msm8953-mdss-panels */
 #include "panel/dsi-panel-td4310-fhdplus-video_e7.dtsi"
 #include "panel/dsi-panel-td4310-fhdplus-video_e7_g55.dtsi"
 #include "panel/dsi-panel-td4310-ebbg-fhdplus-video_e7.dtsi"
 #include "panel/dsi-panel-nt36672-tianma-fhdplus-video_e7.dtsi"
 #include "panel/dsi-panel-nt36672-csot-fhdplus-video_e7.dtsi"
-/*add end for E7 display*/
 
 &soc {
 	dsi_panel_pwr_supply: dsi_panel_pwr_supply {
@@ -43,7 +49,6 @@
 	};
 };
 
-/*add begin for E7 display*/
 &dsi_td4310_fhdplus_e7_vid {
 	qcom,mdss-dsi-panel-timings-phy-v2 = [25 1f 09 0a 06 03 04 a0
 					      25 1f 09 0a 06 03 04 a0
@@ -83,5 +88,4 @@
 		25 1f 09 0a 06 03 04 a0
 		25 1e 08 0a 06 03 04 a0];
 };
-/*add end for E7 display*/
 
