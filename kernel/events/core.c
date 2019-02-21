@@ -4289,7 +4289,7 @@ static DEFINE_SPINLOCK(zombie_list_lock);
  * object, it will not preserve its functionality. Once the last 'user'
  * gives up the object, we'll destroy the thing.
  */
-int perf_event_release_kernel(struct perf_event *event)
+static int __perf_event_release_kernel(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
 	struct perf_event *child, *tmp;
@@ -4300,7 +4300,7 @@ int perf_event_release_kernel(struct perf_event *event)
 	 *  back online.
 	 */
 #if defined CONFIG_HOTPLUG_CPU || defined CONFIG_KEXEC_CORE
-	if (event->cpu != -1 && !cpu_online(event->cpu)) {
+	if (event->cpu != -1 && per_cpu(is_hotplugging, event->cpu)) {
 		if (event->state == PERF_EVENT_STATE_ZOMBIE)
 			return 0;
 
@@ -4417,6 +4417,17 @@ no_ctx:
 	put_event(event); /* Must be the 'last' reference */
 	return 0;
 }
+
+int perf_event_release_kernel(struct perf_event *event)
+{
+	int ret;
+
+	mutex_lock(&pmus_lock);
+	ret = __perf_event_release_kernel(event);
+	mutex_unlock(&pmus_lock);
+
+	return ret;
+}
 EXPORT_SYMBOL_GPL(perf_event_release_kernel);
 
 /*
@@ -4461,7 +4472,9 @@ EXPORT_SYMBOL_GPL(perf_event_read_value);
 static int __perf_read_group_add(struct perf_event *leader,
 					u64 read_format, u64 *values)
 {
+	struct perf_event_context *ctx = leader->ctx;
 	struct perf_event *sub;
+	unsigned long flags;
 	int n = 1; /* skip @nr */
 	int ret;
 
@@ -4491,12 +4504,15 @@ static int __perf_read_group_add(struct perf_event *leader,
 	if (read_format & PERF_FORMAT_ID)
 		values[n++] = primary_event_id(leader);
 
+	raw_spin_lock_irqsave(&ctx->lock, flags);
+
 	list_for_each_entry(sub, &leader->sibling_list, group_entry) {
 		values[n++] += perf_event_count(sub);
 		if (read_format & PERF_FORMAT_ID)
 			values[n++] = primary_event_id(sub);
 	}
 
+	raw_spin_unlock_irqrestore(&ctx->lock, flags);
 	return 0;
 }
 
@@ -4725,6 +4741,11 @@ static void __perf_event_period(struct perf_event *event,
 	}
 }
 
+static int perf_event_check_period(struct perf_event *event, u64 value)
+{
+	return event->pmu->check_period(event, value);
+}
+
 static int perf_event_period(struct perf_event *event, u64 __user *arg)
 {
 	u64 value;
@@ -4739,6 +4760,9 @@ static int perf_event_period(struct perf_event *event, u64 __user *arg)
 		return -EINVAL;
 
 	if (event->attr.freq && value > sysctl_perf_event_sample_rate)
+		return -EINVAL;
+
+	if (perf_event_check_period(event, value))
 		return -EINVAL;
 
 	event_function_call(event, __perf_event_period, &value);
@@ -5693,6 +5717,7 @@ perf_output_sample_ustack(struct perf_output_handle *handle, u64 dump_size,
 		unsigned long sp;
 		unsigned int rem;
 		u64 dyn_size;
+		mm_segment_t fs;
 
 		/*
 		 * We dump:
@@ -5710,7 +5735,10 @@ perf_output_sample_ustack(struct perf_output_handle *handle, u64 dump_size,
 
 		/* Data. */
 		sp = perf_user_stack_pointer(regs);
+		fs = get_fs();
+		set_fs(USER_DS);
 		rem = __output_copy_user(handle, (void *) sp, dump_size);
+		set_fs(fs);
 		dyn_size = dump_size - rem;
 
 		perf_output_skip(handle, rem);
@@ -7864,6 +7892,8 @@ void perf_tp_event(u16 event_type, u64 count, void *record, int entry_size,
 			goto unlock;
 
 		list_for_each_entry_rcu(event, &ctx->event_list, event_entry) {
+			if (event->cpu != smp_processor_id())
+				continue;
 			if (event->attr.type != PERF_TYPE_TRACEPOINT)
 				continue;
 			if (event->attr.config != entry->type)
@@ -8745,6 +8775,11 @@ static int perf_pmu_nop_int(struct pmu *pmu)
 	return 0;
 }
 
+static int perf_event_nop_int(struct perf_event *event, u64 value)
+{
+	return 0;
+}
+
 static DEFINE_PER_CPU(unsigned int, nop_txn_flags);
 
 static void perf_pmu_start_txn(struct pmu *pmu, unsigned int flags)
@@ -9066,6 +9101,9 @@ got_cpu_context:
 		pmu->pmu_enable  = perf_pmu_nop_void;
 		pmu->pmu_disable = perf_pmu_nop_void;
 	}
+
+	if (!pmu->check_period)
+		pmu->check_period = perf_event_nop_int;
 
 	if (!pmu->event_idx)
 		pmu->event_idx = perf_event_idx_default;
@@ -11130,7 +11168,7 @@ static void perf_event_zombie_cleanup(unsigned int cpu)
 		 * PMU expects it to be in an active state
 		 */
 		event->state = PERF_EVENT_STATE_ACTIVE;
-		perf_event_release_kernel(event);
+		__perf_event_release_kernel(event);
 
 		spin_lock(&zombie_list_lock);
 	}
@@ -11145,6 +11183,7 @@ static int perf_event_start_swevents(unsigned int cpu)
 	struct perf_event *event;
 	int idx;
 
+	mutex_lock(&pmus_lock);
 	perf_event_zombie_cleanup(cpu);
 
 	idx = srcu_read_lock(&pmus_srcu);
@@ -11159,6 +11198,8 @@ static int perf_event_start_swevents(unsigned int cpu)
 	}
 	srcu_read_unlock(&pmus_srcu, idx);
 	per_cpu(is_hotplugging, cpu) = false;
+	mutex_unlock(&pmus_lock);
+
 	return 0;
 }
 
@@ -11198,13 +11239,25 @@ static void __perf_event_exit_context(void *__info)
 
 static void perf_event_exit_cpu_context(int cpu)
 {
+	struct perf_cpu_context *cpuctx;
 	struct perf_event_context *ctx;
+	unsigned long flags;
 	struct pmu *pmu;
 	int idx;
 
 	idx = srcu_read_lock(&pmus_srcu);
 	list_for_each_entry_rcu(pmu, &pmus, entry) {
-		ctx = &per_cpu_ptr(pmu->pmu_cpu_context, cpu)->ctx;
+		cpuctx = per_cpu_ptr(pmu->pmu_cpu_context, cpu);
+		ctx = &cpuctx->ctx;
+
+		/* Cancel the mux hrtimer to avoid CPU migration */
+		if (pmu->task_ctx_nr != perf_sw_context) {
+			raw_spin_lock_irqsave(&cpuctx->hrtimer_lock, flags);
+			hrtimer_cancel(&cpuctx->hrtimer);
+			cpuctx->hrtimer_active = 0;
+			raw_spin_unlock_irqrestore(&cpuctx->hrtimer_lock,
+							flags);
+		}
 
 		mutex_lock(&ctx->mutex);
 		smp_call_function_single(cpu, __perf_event_exit_context, ctx, 1);
@@ -11220,8 +11273,10 @@ static void perf_event_exit_cpu_context(int cpu) { }
 
 int perf_event_exit_cpu(unsigned int cpu)
 {
+	mutex_lock(&pmus_lock);
 	per_cpu(is_hotplugging, cpu) = true;
 	perf_event_exit_cpu_context(cpu);
+	mutex_unlock(&pmus_lock);
 	return 0;
 }
 
