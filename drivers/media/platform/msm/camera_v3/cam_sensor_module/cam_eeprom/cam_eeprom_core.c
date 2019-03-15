@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,6 @@
 #include "cam_eeprom_soc.h"
 #include "cam_debug_util.h"
 #include "cam_common_util.h"
-#include "cam_packet_util.h"
 
 /**
  * cam_eeprom_read_memory() - read map data into buffer
@@ -414,7 +413,7 @@ static int32_t cam_eeprom_update_slaveInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 static int32_t cam_eeprom_parse_memory_map(
 	struct cam_eeprom_memory_block_t *data,
 	void *cmd_buf, int cmd_length, uint16_t *cmd_length_bytes,
-	int *num_map, size_t remain_buf_len)
+	int *num_map)
 {
 	int32_t                            rc = 0;
 	int32_t                            cnt = 0;
@@ -428,21 +427,8 @@ static int32_t cam_eeprom_parse_memory_map(
 	struct cam_cmd_i2c_continuous_rd  *i2c_cont_rd = NULL;
 	struct cam_cmd_conditional_wait   *i2c_poll = NULL;
 	struct cam_cmd_unconditional_wait *i2c_uncond_wait = NULL;
-	size_t                             validate_size = 0;
 
 	generic_op_code = cmm_hdr->third_byte;
-
-	if (cmm_hdr->cmd_type == CAMERA_SENSOR_CMD_TYPE_I2C_RNDM_WR)
-		validate_size = sizeof(struct cam_cmd_i2c_random_wr);
-	else if (cmm_hdr->cmd_type == CAMERA_SENSOR_CMD_TYPE_I2C_CONT_RD)
-		validate_size = sizeof(struct cam_cmd_i2c_continuous_rd);
-	else if (cmm_hdr->cmd_type == CAMERA_SENSOR_CMD_TYPE_WAIT)
-		validate_size = sizeof(struct cam_cmd_unconditional_wait);
-
-	if (remain_buf_len < validate_size) {
-		CAM_ERR(CAM_EEPROM, "not enough buffer");
-		return -EINVAL;
-	}
 	switch (cmm_hdr->cmd_type) {
 	case CAMERA_SENSOR_CMD_TYPE_I2C_RNDM_WR:
 		i2c_random_wr = (struct cam_cmd_i2c_random_wr *)cmd_buf;
@@ -549,7 +535,6 @@ static int32_t cam_eeprom_init_pkt_parser(struct cam_eeprom_ctrl_t *e_ctrl,
 	uint32_t                       *cmd_buf = NULL;
 	uintptr_t                        generic_pkt_addr;
 	size_t                          pkt_len = 0;
-	size_t                          remain_len = 0;
 	uint32_t                        total_cmd_buf_in_bytes = 0;
 	uint32_t                        processed_cmd_buf_in_bytes = 0;
 	struct common_header           *cmm_hdr = NULL;
@@ -590,43 +575,15 @@ static int32_t cam_eeprom_init_pkt_parser(struct cam_eeprom_ctrl_t *e_ctrl,
 		cmd_buf = (uint32_t *)generic_pkt_addr;
 		if (!cmd_buf) {
 			CAM_ERR(CAM_EEPROM, "invalid cmd buf");
-			rc = -EINVAL;
-			goto rel_cmd_buf;
+			return -EINVAL;
 		}
-
-		if ((pkt_len < sizeof(struct common_header)) ||
-			(cmd_desc[i].offset > (pkt_len -
-			sizeof(struct common_header)))) {
-			CAM_ERR(CAM_EEPROM, "Not enough buffer");
-			rc = -EINVAL;
-			goto rel_cmd_buf;
-		}
-		remain_len = pkt_len - cmd_desc[i].offset;
 		cmd_buf += cmd_desc[i].offset / sizeof(uint32_t);
-
-		if (total_cmd_buf_in_bytes > remain_len) {
-			CAM_ERR(CAM_EEPROM, "Not enough buffer for command");
-			rc = -EINVAL;
-			goto rel_cmd_buf;
-		}
 		/* Loop through multiple cmd formats in one cmd buffer */
 		while (processed_cmd_buf_in_bytes < total_cmd_buf_in_bytes) {
-			if ((remain_len - processed_cmd_buf_in_bytes) <
-				sizeof(struct common_header)) {
-				CAM_ERR(CAM_EEPROM, "Not enough buf");
-				rc = -EINVAL;
-				goto rel_cmd_buf;
-			}
 			cmm_hdr = (struct common_header *)cmd_buf;
 			switch (cmm_hdr->cmd_type) {
 			case CAMERA_SENSOR_CMD_TYPE_I2C_INFO:
 				i2c_info = (struct cam_cmd_i2c_info *)cmd_buf;
-				if ((remain_len - processed_cmd_buf_in_bytes) <
-					sizeof(struct cam_cmd_i2c_info)) {
-					CAM_ERR(CAM_EEPROM, "Not enough buf");
-					rc = -EINVAL;
-					goto rel_cmd_buf;
-				}
 				/* Configure the following map slave address */
 				map[num_map + 1].saddr = i2c_info->slave_addr;
 				rc = cam_eeprom_update_slaveInfo(e_ctrl,
@@ -642,16 +599,14 @@ static int32_t cam_eeprom_init_pkt_parser(struct cam_eeprom_ctrl_t *e_ctrl,
 			case CAMERA_SENSOR_CMD_TYPE_PWR_DOWN:
 				cmd_length_in_bytes = total_cmd_buf_in_bytes;
 				rc = cam_sensor_update_power_settings(cmd_buf,
-					cmd_length_in_bytes, power_info,
-					(remain_len -
-					processed_cmd_buf_in_bytes));
+					cmd_length_in_bytes, power_info);
 				processed_cmd_buf_in_bytes +=
 					cmd_length_in_bytes;
 				cmd_buf += cmd_length_in_bytes/
 					sizeof(uint32_t);
 				if (rc) {
 					CAM_ERR(CAM_EEPROM, "Failed");
-					goto rel_cmd_buf;
+					return rc;
 				}
 				break;
 			case CAMERA_SENSOR_CMD_TYPE_I2C_RNDM_WR:
@@ -661,9 +616,7 @@ static int32_t cam_eeprom_init_pkt_parser(struct cam_eeprom_ctrl_t *e_ctrl,
 				rc = cam_eeprom_parse_memory_map(
 					&e_ctrl->cal_data, cmd_buf,
 					total_cmd_buf_in_bytes,
-					&cmd_length_in_bytes, &num_map,
-					(remain_len -
-					processed_cmd_buf_in_bytes));
+					&cmd_length_in_bytes, &num_map);
 				processed_cmd_buf_in_bytes +=
 					cmd_length_in_bytes;
 				cmd_buf += cmd_length_in_bytes/sizeof(uint32_t);
@@ -673,18 +626,7 @@ static int32_t cam_eeprom_init_pkt_parser(struct cam_eeprom_ctrl_t *e_ctrl,
 			}
 		}
 		e_ctrl->cal_data.num_map = num_map + 1;
-		if (cam_mem_put_cpu_buf(cmd_desc[i].mem_handle))
-			CAM_WARN(CAM_EEPROM, "Failed to put cpu buf: %d",
-				cmd_desc[i].mem_handle);
 	}
-
-	return rc;
-
-rel_cmd_buf:
-	if (cam_mem_put_cpu_buf(cmd_desc[i].mem_handle))
-		CAM_WARN(CAM_EEPROM, "Failed to put cpu buf: %d",
-			cmd_desc[i].mem_handle);
-
 	return rc;
 }
 
@@ -705,7 +647,6 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 	uintptr_t              buf_addr;
 	size_t                buf_size;
 	uint8_t               *read_buffer;
-	size_t                remain_len = 0;
 
 	io_cfg = (struct cam_buf_io_cfg *) ((uint8_t *)
 		&csl_packet->payload +
@@ -719,18 +660,6 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 		if (io_cfg->direction == CAM_BUF_OUTPUT) {
 			rc = cam_mem_get_cpu_buf(io_cfg->mem_handle[0],
 				&buf_addr, &buf_size);
-			if (rc) {
-				CAM_ERR(CAM_EEPROM, "Fail in get buffer: %d",
-					rc);
-				return rc;
-			}
-			if (buf_size <= io_cfg->offsets[0]) {
-				CAM_ERR(CAM_EEPROM, "Not enough buffer");
-				rc = -EINVAL;
-				goto rel_cmd_buf;
-			}
-
-			remain_len = buf_size - io_cfg->offsets[0];
 			CAM_DBG(CAM_EEPROM, "buf_addr : %pK, buf_size : %zu\n",
 				(void *)buf_addr, buf_size);
 
@@ -738,38 +667,26 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 			if (!read_buffer) {
 				CAM_ERR(CAM_EEPROM,
 					"invalid buffer to copy data");
-				rc = -EINVAL;
-				goto rel_cmd_buf;
+				return -EINVAL;
 			}
 			read_buffer += io_cfg->offsets[0];
 
-			if (remain_len < e_ctrl->cal_data.num_data) {
+			if (buf_size < e_ctrl->cal_data.num_data) {
 				CAM_ERR(CAM_EEPROM,
 					"failed to copy, Invalid size");
-				rc = -EINVAL;
-				goto rel_cmd_buf;
+				return -EINVAL;
 			}
 
 			CAM_DBG(CAM_EEPROM, "copy the data, len:%d",
 				e_ctrl->cal_data.num_data);
 			memcpy(read_buffer, e_ctrl->cal_data.mapdata,
 					e_ctrl->cal_data.num_data);
-			if (cam_mem_put_cpu_buf(io_cfg->mem_handle[0]))
-				CAM_WARN(CAM_EEPROM, "Fail in put buffer: 0x%x",
-					io_cfg->mem_handle[0]);
+
 		} else {
 			CAM_ERR(CAM_EEPROM, "Invalid direction");
 			rc = -EINVAL;
 		}
 	}
-
-	return rc;
-
-rel_cmd_buf:
-	if (cam_mem_put_cpu_buf(io_cfg->mem_handle[0]))
-		CAM_WARN(CAM_EEPROM, "Fail in put buffer : %d",
-			io_cfg->mem_handle[0]);
-
 	return rc;
 }
 
@@ -787,7 +704,6 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 	struct cam_config_dev_cmd       dev_config;
 	uintptr_t                        generic_pkt_addr;
 	size_t                          pkt_len;
-	size_t                          remain_len = 0;
 	struct cam_packet              *csl_packet = NULL;
 	struct cam_eeprom_soc_private  *soc_private =
 		(struct cam_eeprom_soc_private *)e_ctrl->soc_info.soc_private;
@@ -807,28 +723,15 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		return rc;
 	}
 
-	remain_len = pkt_len;
-	if ((sizeof(struct cam_packet) > pkt_len) ||
-		((size_t)dev_config.offset >= pkt_len -
-		sizeof(struct cam_packet))) {
+	if (dev_config.offset > pkt_len) {
 		CAM_ERR(CAM_EEPROM,
-			"Inval cam_packet strut size: %zu, len_of_buff: %zu",
-			 sizeof(struct cam_packet), pkt_len);
-		rc = -EINVAL;
-		goto release_buf;
+			"Offset is out of bound: off: %lld, %zu",
+			dev_config.offset, pkt_len);
+		return -EINVAL;
 	}
 
-	remain_len -= (size_t)dev_config.offset;
 	csl_packet = (struct cam_packet *)
-			(generic_pkt_addr + (uint32_t)dev_config.offset);
-
-	if (cam_packet_util_validate_packet(csl_packet,
-		remain_len)) {
-		CAM_ERR(CAM_EEPROM, "Invalid packet params");
-		rc = -EINVAL;
-		goto release_buf;
-	}
-
+		(generic_pkt_addr + (uint32_t)dev_config.offset);
 	switch (csl_packet->header.op_code & 0xFFFFFF) {
 	case CAM_EEPROM_PACKET_OPCODE_INIT:
 		if (e_ctrl->userspace_probe == false) {
@@ -836,7 +739,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 					e_ctrl->soc_info.dev->of_node, e_ctrl);
 			if (rc < 0) {
 				CAM_ERR(CAM_EEPROM, "Failed: rc : %d", rc);
-				goto release_buf;
+				return rc;
 			}
 			rc = cam_eeprom_get_cal_data(e_ctrl, csl_packet);
 			vfree(e_ctrl->cal_data.mapdata);
@@ -851,7 +754,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		if (rc) {
 			CAM_ERR(CAM_EEPROM,
 				"Failed in parsing the pkt");
-			goto release_buf;
+			return rc;
 		}
 
 		e_ctrl->cal_data.mapdata =
@@ -894,13 +797,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 	default:
 		break;
 	}
-
-	if (cam_mem_put_cpu_buf(dev_config.packet_handle))
-		CAM_WARN(CAM_EEPROM, "Put cpu buffer failed : %llu",
-			dev_config.packet_handle);
-
 	return rc;
-
 power_down:
 	cam_eeprom_power_down(e_ctrl);
 memdata_free:
@@ -914,11 +811,6 @@ error:
 	e_ctrl->cal_data.num_data = 0;
 	e_ctrl->cal_data.num_map = 0;
 	e_ctrl->cam_eeprom_state = CAM_EEPROM_INIT;
-release_buf:
-	if (cam_mem_put_cpu_buf(dev_config.packet_handle))
-		CAM_WARN(CAM_EEPROM, "Put cpu buffer failed : %llu",
-			dev_config.packet_handle);
-
 	return rc;
 }
 
