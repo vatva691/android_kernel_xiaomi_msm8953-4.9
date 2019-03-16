@@ -15,7 +15,7 @@
 #include <linux/errno.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/i2c/i2c-qup.h>
+
 #include <linux/gpio.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
@@ -25,10 +25,7 @@
 #include <linux/of_fdt.h>
 #include <linux/of_irq.h>
 #include <linux/memory.h>
-#include <linux/regulator/cpr-regulator.h>
-#include <linux/regulator/fan53555.h>
-#include <linux/regulator/onsemi-ncp6335d.h>
-#include <linux/regulator/qpnp-regulator.h>
+
 #include <linux/msm_tsens.h>
 #include <asm/mach/map.h>
 #include <asm/hardware/gic.h>
